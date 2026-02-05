@@ -1,0 +1,1 @@
+﻿"""Camada de relatórios (DOCX/PDF)."""

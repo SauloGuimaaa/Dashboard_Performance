@@ -1,0 +1,26 @@
+# venv
+.venv/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# streamlit
+.streamlit/
+
+# outputs
+output/
+output/logs/*.log
+output/*.png
+output/*.pdf
+output/*.docx
+
+# editors
+.vscode/
+.idea/
+
+input/
+.DS_Store
+.streamlit/secrets.toml
