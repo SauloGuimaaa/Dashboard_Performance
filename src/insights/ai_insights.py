@@ -121,9 +121,13 @@ def generate_instagram_insights(
 
     http_client = httpx.Client(timeout=httpx.Timeout(30.0), trust_env=False)
     client = OpenAI(api_key=api_key, http_client=http_client)
-    response = client.responses.create(
+    response = client.chat.completions.create(
         model=model,
-        input=prompt,
+        messages=[
+            {"role": "system", "content": "Você é um(a) especialista em performance digital no Instagram."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
     )
 
-    return response.output_text
+    return response.choices[0].message.content or ""
