@@ -627,7 +627,7 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
     max_posts = st.slider(
         "Quantidade de posts para análise (amostra)",
         min_value=5,
-        max_value=30,
+        max_value=200,
         value=10,
         step=1,
         key=f"{prefix}_max_posts",

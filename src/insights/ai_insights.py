@@ -26,6 +26,12 @@ def _safe_sample(df: pd.DataFrame, n: int) -> pd.DataFrame:
     return df.sample(n=n, random_state=42)
 
 
+def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.columns.is_unique:
+        return df
+    return df.loc[:, ~df.columns.duplicated()].copy()
+
+
 def _select_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     available = [col for col in columns if col in df.columns]
     return df.loc[:, available]
@@ -33,6 +39,7 @@ def _select_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightRequest:
     """Builds a compact summary payload for the AI prompt."""
+    df = _dedupe_columns(df)
     summary = {
         "rows": int(len(df)),
         "date_min": None if df["created_at"].isna().all() else str(df["created_at"].min()),
@@ -47,6 +54,7 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
             df.sort_values("reach", ascending=False).head(max_posts),
             ["post_id", "created_at", "post_type", "reach", "engagement", "views", "permalink", "caption"],
         )
+        .assign(created_at=lambda d: d["created_at"].astype("string") if "created_at" in d else d)
         .fillna("")
         .to_dict("records")
         if "reach" in df
@@ -58,6 +66,7 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
             df.sort_values("engagement", ascending=False).head(max_posts),
             ["post_id", "created_at", "post_type", "reach", "engagement", "views", "permalink", "caption"],
         )
+        .assign(created_at=lambda d: d["created_at"].astype("string") if "created_at" in d else d)
         .fillna("")
         .to_dict("records")
         if "engagement" in df
