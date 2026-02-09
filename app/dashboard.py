@@ -637,6 +637,7 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
         if dff.empty:
             st.warning("Sem dados após filtros. Ajuste o período ou selecione outros arquivos.")
             return
+        dff = dff.loc[:, ~dff.columns.duplicated()].copy()
         if not api_key.strip():
             st.warning("Informe sua OpenAI API Key para continuar.")
             return

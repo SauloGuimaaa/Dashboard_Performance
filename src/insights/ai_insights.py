@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 import json
 from typing import Any
 
+import httpx
 import pandas as pd
 from openai import OpenAI
 
@@ -118,7 +119,8 @@ def generate_instagram_insights(
         f"{payload_json}"
     )
 
-    client = OpenAI(api_key=api_key)
+    http_client = httpx.Client(timeout=httpx.Timeout(30.0), trust_env=False)
+    client = OpenAI(api_key=api_key, http_client=http_client)
     response = client.responses.create(
         model=model,
         input=prompt,
