@@ -632,6 +632,14 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
         step=1,
         key=f"{prefix}_max_posts",
     )
+    st.markdown("**Categorias e palavras-chave (1 por linha)**")
+    st.caption("Ex.: Economia: juros, inflação, PIB, mercado")
+    category_rules_text = st.text_area(
+        "Mapeamento de categorias",
+        value="Economia: juros, inflação, PIB, mercado, economia, exportação\nPolítica: governo, eleição, prefeito, vereador, congresso, ministério\nAnimais: boi, papagaio, cachorro, gato, abelha, fauna, animal",
+        height=120,
+        key=f"{prefix}_cat_rules",
+    )
 
     if st.button("Gerar insights", key=f"{prefix}_run"):
         if dff.empty:
@@ -643,7 +651,13 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
             return
         with st.spinner("Gerando insights..."):
             try:
-                insights = generate_instagram_insights(dff, api_key=api_key.strip(), model=model.strip(), max_posts=max_posts)
+                insights = generate_instagram_insights(
+                    dff,
+                    api_key=api_key.strip(),
+                    model=model.strip(),
+                    max_posts=max_posts,
+                    category_rules_text=category_rules_text,
+                )
             except Exception as exc:
                 st.error("Falha ao gerar insights. Tente reduzir a amostra ou aguarde alguns segundos e tente novamente.")
                 st.exception(exc)
