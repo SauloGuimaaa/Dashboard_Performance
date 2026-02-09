@@ -624,6 +624,23 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
         key=f"{prefix}_model",
         help="Ex.: gpt-4o-mini, gpt-4o, ou outro modelo disponível na sua conta.",
     )
+    vehicle_name = st.text_input(
+        "Nome do veículo",
+        value="MSConecta",
+        key=f"{prefix}_vehicle",
+    )
+    objective = st.text_input(
+        "Objetivo do relatório",
+        value="Maximizar engajamento e alcance orgânico",
+        key=f"{prefix}_objective",
+    )
+    benchmark_rate = st.number_input(
+        "Benchmark de taxa de engajamento (%)",
+        min_value=0.0,
+        value=2.5,
+        step=0.1,
+        key=f"{prefix}_benchmark",
+    )
     max_posts = st.slider(
         "Quantidade de posts para análise (amostra)",
         min_value=5,
@@ -657,6 +674,9 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
                     model=model.strip(),
                     max_posts=max_posts,
                     category_rules_text=category_rules_text,
+                    vehicle_name=vehicle_name.strip(),
+                    objective=objective.strip(),
+                    benchmark_engagement_rate=benchmark_rate,
                 )
             except Exception as exc:
                 st.error("Falha ao gerar insights. Tente reduzir a amostra ou aguarde alguns segundos e tente novamente.")

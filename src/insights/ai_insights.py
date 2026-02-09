@@ -23,6 +23,10 @@ class InsightRequest:
     top_by_category: dict[str, list[dict[str, Any]]]
     category_rankings: dict[str, list[dict[str, Any]]]
     top20_distribution: list[dict[str, Any]]
+    overall_metrics: dict[str, Any]
+    format_metrics: list[dict[str, Any]]
+    temporal_day: list[dict[str, Any]]
+    temporal_hour: list[dict[str, Any]]
 
 
 def _safe_sample(df: pd.DataFrame, n: int) -> pd.DataFrame:
@@ -88,6 +92,28 @@ def _categorize_caption(caption: str, categories: dict[str, list[str]]) -> str:
     return "Outros"
 
 
+def _ensure_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    dff = df.copy()
+    for col in ["likes", "comments", "shares", "saves", "reach", "views"]:
+        if col not in dff.columns:
+            dff[col] = 0
+    if "engagement" not in dff.columns:
+        dff["engagement"] = dff["likes"] + dff["comments"] + dff["shares"] + dff["saves"]
+    dff["engagement_rate"] = (
+        (dff["engagement"] / dff["reach"].replace({0: pd.NA})).fillna(0.0) if "reach" in dff else 0.0
+    )
+    dff["virality"] = (
+        (dff["shares"] / dff["reach"].replace({0: pd.NA}) * 1000).fillna(0.0) if "reach" in dff else 0.0
+    )
+    dff["save_value"] = (
+        (dff["saves"] / dff["engagement"].replace({0: pd.NA}) * 100).fillna(0.0) if "engagement" in dff else 0.0
+    )
+    dff["community_index"] = (
+        (dff["comments"] / dff["likes"].replace({0: pd.NA}) * 100).fillna(0.0) if "likes" in dff else 0.0
+    )
+    return dff
+
+
 def build_insight_request(
     df: pd.DataFrame,
     max_posts: int = 10,
@@ -96,6 +122,7 @@ def build_insight_request(
 ) -> InsightRequest:
     """Builds a compact summary payload for the AI prompt."""
     df = _dedupe_columns(df)
+    df = _ensure_metrics(df)
     created_at = df["created_at"] if "created_at" in df else pd.Series([], dtype="datetime64[ns]")
     summary = {
         "rows": int(len(df)),
@@ -167,6 +194,9 @@ def build_insight_request(
         reach_avg = float(reach_total / posts_count) if posts_count else 0.0
         engagement_avg = float(engagement_total / posts_count) if posts_count else 0.0
         views_avg = float(views_total / posts_count) if posts_count else 0.0
+        eng_std = float(group["engagement"].std()) if posts_count > 1 else 0.0
+        eng_median = float(group["engagement"].median()) if posts_count else 0.0
+        cv = float((eng_std / engagement_avg) * 100) if engagement_avg else 0.0
         category_metrics.append(
             {
                 "category": category,
@@ -177,9 +207,19 @@ def build_insight_request(
                 "reach_avg": reach_avg,
                 "engagement_avg": engagement_avg,
                 "views_avg": views_avg,
+                "engagement_median": eng_median,
+                "engagement_std": eng_std,
+                "cv": cv,
                 "engagement_rate": float(
                     (group["engagement"].sum() / group["reach"].sum()) if "reach" in group and group["reach"].sum() else 0.0
                 ),
+                "virality_avg": float(group["virality"].mean()) if "virality" in group else 0.0,
+                "save_value_avg": float(group["save_value"].mean()) if "save_value" in group else 0.0,
+                "community_index_avg": float(group["community_index"].mean()) if "community_index" in group else 0.0,
+                "likes_total": int(group["likes"].sum()) if "likes" in group else 0,
+                "comments_total": int(group["comments"].sum()) if "comments" in group else 0,
+                "shares_total": int(group["shares"].sum()) if "shares" in group else 0,
+                "saves_total": int(group["saves"].sum()) if "saves" in group else 0,
             }
         )
 
@@ -208,6 +248,60 @@ def build_insight_request(
         top20_counts = top20["_category"].value_counts().reset_index()
         top20_distribution = top20_counts.rename(columns={"index": "category", "_category": "count"}).to_dict("records")
 
+    overall_metrics = {
+        "engagement_avg": float(df["engagement"].mean()) if "engagement" in df else 0.0,
+        "engagement_median": float(df["engagement"].median()) if "engagement" in df else 0.0,
+        "engagement_rate_avg": float(df["engagement_rate"].mean()) if "engagement_rate" in df else 0.0,
+        "virality_avg": float(df["virality"].mean()) if "virality" in df else 0.0,
+        "save_value_avg": float(df["save_value"].mean()) if "save_value" in df else 0.0,
+        "community_index_avg": float(df["community_index"].mean()) if "community_index" in df else 0.0,
+    }
+
+    format_metrics = []
+    if "post_type" in df:
+        for ptype, group in df.groupby("post_type"):
+            format_metrics.append(
+                {
+                    "post_type": ptype,
+                    "posts": int(len(group)),
+                    "engagement_avg": float(group["engagement"].mean()) if "engagement" in group else 0.0,
+                    "engagement_rate_avg": float(group["engagement_rate"].mean()) if "engagement_rate" in group else 0.0,
+                    "reach_avg": float(group["reach"].mean()) if "reach" in group else 0.0,
+                    "views_avg": float(group["views"].mean()) if "views" in group else 0.0,
+                }
+            )
+
+    temporal_day = []
+    if "created_at" in df:
+        dff = df.dropna(subset=["created_at"]).copy()
+        if not dff.empty:
+            dff["weekday"] = dff["created_at"].dt.day_name()
+            for day, group in dff.groupby("weekday"):
+                temporal_day.append(
+                    {
+                        "weekday": day,
+                        "posts": int(len(group)),
+                        "engagement_avg": float(group["engagement"].mean()),
+                        "engagement_rate_avg": float(group["engagement_rate"].mean()),
+                        "reach_avg": float(group["reach"].mean()),
+                    }
+                )
+
+    temporal_hour = []
+    if "created_at" in df:
+        dff = df.dropna(subset=["created_at"]).copy()
+        if not dff.empty:
+            dff["hour"] = dff["created_at"].dt.hour
+            for hour, group in dff.groupby("hour"):
+                temporal_hour.append(
+                    {
+                        "hour": int(hour),
+                        "posts": int(len(group)),
+                        "engagement_avg": float(group["engagement"].mean()),
+                        "engagement_rate_avg": float(group["engagement_rate"].mean()),
+                    }
+                )
+
     return InsightRequest(
         summary=summary,
         top_reach=top_reach,
@@ -219,6 +313,10 @@ def build_insight_request(
         top_by_category=top_by_category,
         category_rankings=category_rankings,
         top20_distribution=top20_distribution,
+        overall_metrics=overall_metrics,
+        format_metrics=format_metrics,
+        temporal_day=temporal_day,
+        temporal_hour=temporal_hour,
     )
 
 
@@ -228,6 +326,9 @@ def generate_instagram_insights(
     model: str = "gpt-4o-mini",
     max_posts: int = 10,
     category_rules_text: str | None = None,
+    vehicle_name: str | None = None,
+    objective: str | None = None,
+    benchmark_engagement_rate: float | None = None,
 ) -> str:
     """Generate insights text for Instagram performance using OpenAI."""
     category_rules = _build_category_map(category_rules_text or "")
@@ -244,19 +345,33 @@ def generate_instagram_insights(
         if len(payload_json) <= 12000:
             break
 
+    vehicle = vehicle_name or "Veículo"
+    objective_text = objective or "Maximizar engajamento e alcance orgânico"
+    benchmark_text = (
+        f"Benchmark de taxa de engajamento: {benchmark_engagement_rate:.2f}%."
+        if benchmark_engagement_rate is not None
+        else "Benchmark não informado."
+    )
+
     prompt = (
-        "Você é um(a) estrategista de performance digital para Instagram. "
-        "Gere um relatório executivo, direto e profissional, baseado em dados. "
-        "Siga a estrutura obrigatória abaixo e use números concretos do JSON.\n\n"
+        "Você é Dr. Ricardo Mendes, consultor sênior em estratégia digital para veículos de notícias. "
+        f"Cliente: {vehicle}. Objetivo: {objective_text}. {benchmark_text}\n\n"
+        "Gere um relatório executivo de alto valor, baseado em dados, seguindo o framework O-P-E-A "
+        "(Observação, Por quê, E então, Ação) em todos os insights. "
+        "Sempre quantifique com comparações vs média geral e vs benchmark quando disponível.\n\n"
         "Estrutura obrigatória:\n"
         "1) Pergunta estratégica (1 frase)\n"
-        "2) Resumo executivo (3-5 bullets)\n"
-        "3) Ranking de performance por categoria (views_avg, reach_avg, engagement_avg)\n"
-        "4) Categorias vencedoras + justificativa (2-4 categorias)\n"
-        "5) Categorias críticas (queda/baixa eficiência) + hipótese de causa\n"
-        "6) Dominância no Top 20 (participação por categoria)\n"
-        "7) Mix recomendado (proporção sugerida por categoria, com ação: AUMENTAR/MANTER/REDUZIR)\n"
-        "8) Próximos passos (3-5 ações práticas)\n\n"
+        "2) Sumário executivo (máx 150 palavras) + Top 3 insights\n"
+        "3) Ranking por categoria (views_avg, reach_avg, engagement_avg, performance vs média)\n"
+        "4) Categorias vencedoras (Top 3) com oportunidades quantificadas e exemplos\n"
+        "5) Categorias críticas (Bottom 3) com diagnóstico e plano de recuperação SMART\n"
+        "6) Formatos (Reels/Carrossel/Imagem): comparativo e mix recomendado\n"
+        "7) Tempo (dia da semana + horários top): recomendações práticas\n"
+        "8) Dominância no Top 20 e padrão identificado\n"
+        "9) Mix recomendado por categoria (AUMENTAR/MANTER/REDUZIR) com impacto estimado\n"
+        "10) Quick wins (5 ações executáveis)\n"
+        "11) Plano de ação 90 dias (3 sprints)\n"
+        "12) KPIs de acompanhamento e conclusão\n\n"
         "Considere legendas, tipo de post e top posts por categoria. "
         "Evite generalidades. Se faltar dado, diga explicitamente.\n\n"
         "Dados estruturados (JSON):\n"
