@@ -21,6 +21,8 @@ class InsightRequest:
     categories: list[dict[str, Any]]
     category_metrics: list[dict[str, Any]]
     top_by_category: dict[str, list[dict[str, Any]]]
+    category_rankings: dict[str, list[dict[str, Any]]]
+    top20_distribution: list[dict[str, Any]]
 
 
 def _safe_sample(df: pd.DataFrame, n: int) -> pd.DataFrame:
@@ -158,18 +160,34 @@ def build_insight_request(
 
     category_metrics = []
     for category, group in df.groupby("_category"):
+        posts_count = int(len(group))
+        reach_total = int(group["reach"].sum()) if "reach" in group else 0
+        engagement_total = int(group["engagement"].sum()) if "engagement" in group else 0
+        views_total = int(group["views"].sum()) if "views" in group else 0
+        reach_avg = float(reach_total / posts_count) if posts_count else 0.0
+        engagement_avg = float(engagement_total / posts_count) if posts_count else 0.0
+        views_avg = float(views_total / posts_count) if posts_count else 0.0
         category_metrics.append(
             {
                 "category": category,
-                "posts": int(len(group)),
-                "reach_total": int(group["reach"].sum()) if "reach" in group else 0,
-                "engagement_total": int(group["engagement"].sum()) if "engagement" in group else 0,
-                "views_total": int(group["views"].sum()) if "views" in group else 0,
+                "posts": posts_count,
+                "reach_total": reach_total,
+                "engagement_total": engagement_total,
+                "views_total": views_total,
+                "reach_avg": reach_avg,
+                "engagement_avg": engagement_avg,
+                "views_avg": views_avg,
                 "engagement_rate": float(
                     (group["engagement"].sum() / group["reach"].sum()) if "reach" in group and group["reach"].sum() else 0.0
                 ),
             }
         )
+
+    category_rankings: dict[str, list[dict[str, Any]]] = {
+        "views_avg": sorted(category_metrics, key=lambda x: x.get("views_avg", 0.0), reverse=True),
+        "reach_avg": sorted(category_metrics, key=lambda x: x.get("reach_avg", 0.0), reverse=True),
+        "engagement_avg": sorted(category_metrics, key=lambda x: x.get("engagement_avg", 0.0), reverse=True),
+    }
 
     top_by_category: dict[str, list[dict[str, Any]]] = {}
     for category, group in df.groupby("_category"):
@@ -184,6 +202,12 @@ def build_insight_request(
         )
         top_by_category[category] = _truncate_records(records, caption_char_limit)
 
+    top20_distribution = []
+    if "reach" in df:
+        top20 = df.sort_values("reach", ascending=False).head(20)
+        top20_counts = top20["_category"].value_counts().reset_index()
+        top20_distribution = top20_counts.rename(columns={"index": "category", "_category": "count"}).to_dict("records")
+
     return InsightRequest(
         summary=summary,
         top_reach=top_reach,
@@ -193,6 +217,8 @@ def build_insight_request(
         categories=categories_summary,
         category_metrics=category_metrics,
         top_by_category=top_by_category,
+        category_rankings=category_rankings,
+        top20_distribution=top20_distribution,
     )
 
 
@@ -219,11 +245,20 @@ def generate_instagram_insights(
             break
 
     prompt = (
-        "Você é um(a) especialista em performance digital no Instagram. "
-        "Analise o dataset e forneça insights acionáveis sobre alcance, views e engajamento. "
-        "Use bullet points, destaque oportunidades e recomendações práticas (ex.: formatos, horários, temas). "
-        "Considere também as legendas e categorias de post. "
-        "Responda em português, de forma objetiva e estruturada.\n\n"
+        "Você é um(a) estrategista de performance digital para Instagram. "
+        "Gere um relatório executivo, direto e profissional, baseado em dados. "
+        "Siga a estrutura obrigatória abaixo e use números concretos do JSON.\n\n"
+        "Estrutura obrigatória:\n"
+        "1) Pergunta estratégica (1 frase)\n"
+        "2) Resumo executivo (3-5 bullets)\n"
+        "3) Ranking de performance por categoria (views_avg, reach_avg, engagement_avg)\n"
+        "4) Categorias vencedoras + justificativa (2-4 categorias)\n"
+        "5) Categorias críticas (queda/baixa eficiência) + hipótese de causa\n"
+        "6) Dominância no Top 20 (participação por categoria)\n"
+        "7) Mix recomendado (proporção sugerida por categoria, com ação: AUMENTAR/MANTER/REDUZIR)\n"
+        "8) Próximos passos (3-5 ações práticas)\n\n"
+        "Considere legendas, tipo de post e top posts por categoria. "
+        "Evite generalidades. Se faltar dado, diga explicitamente.\n\n"
         "Dados estruturados (JSON):\n"
         f"{payload_json}"
     )
