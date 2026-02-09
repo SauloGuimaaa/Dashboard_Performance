@@ -4,10 +4,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from logging.handlers import RotatingFileHandler
+import os
 from pathlib import Path
 import re
-from typing import Iterable, Optional, Tuple
+import sys
 
 import numpy as np
 import pandas as pd
@@ -19,28 +19,19 @@ import plotly.express as px
 # Paths / Logging
 # =========================
 ROOT_DIR = Path(__file__).resolve().parents[1]
-INPUT_DIR = ROOT_DIR / "input"
-OUTPUT_DIR = ROOT_DIR / "output"
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from common.logging_config import setup_logging  # noqa: E402
+from common.paths import INPUT_DIR, OUTPUT_DIR  # noqa: E402
+from insights.ai_insights import generate_instagram_insights  # noqa: E402
+
 CHARTS_DIR = OUTPUT_DIR / "charts"
 TABLES_DIR = OUTPUT_DIR / "tables"
-LOGS_DIR = OUTPUT_DIR / "logs"
 
-
-def setup_logger() -> logging.Logger:
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("dashboard")
-    if logger.handlers:
-        return logger
-    logger.setLevel(logging.INFO)
-    log_path = LOGS_DIR / "dashboard.log"
-    handler = RotatingFileHandler(log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    handler.setFormatter(fmt)
-    logger.addHandler(handler)
-    return logger
-
-
-log = setup_logger()
+setup_logging(log_name="dashboard")
+log = logging.getLogger("dashboard")
 
 
 # =========================
@@ -134,22 +125,22 @@ def _blank_to_na(s: pd.Series | None) -> pd.Series | None:
     return out
 
 
-def _coalesce(a: pd.Series | None, b: pd.Series | None) -> pd.Series:
+def _coalesce(a: pd.Series | None, b: pd.Series | None, index: pd.Index) -> pd.Series:
     a = _blank_to_na(a)
     b = _blank_to_na(b)
     if a is None and b is None:
-        return pd.Series([pd.NA])
+        return pd.Series(pd.NA, index=index)
     if a is None:
-        return b
+        return b.reindex(index)
     if b is None:
-        return a
-    return a.where(a.notna(), b)
+        return a.reindex(index)
+    return a.where(a.notna(), b).reindex(index)
 
 
-def _to_int(s: pd.Series | None) -> pd.Series:
+def _to_int(s: pd.Series | None, index: pd.Index) -> pd.Series:
     s = _blank_to_na(s)
     if s is None:
-        return pd.Series([0], dtype="Int64")
+        return pd.Series(0, index=index, dtype="Int64")
 
     # remove milhares e normaliza decimal pt-br (se existir)
     x = (
@@ -157,7 +148,7 @@ def _to_int(s: pd.Series | None) -> pd.Series:
         .str.replace(".", "", regex=False)
         .str.replace(",", ".", regex=False)
     )
-    return pd.to_numeric(x, errors="coerce").fillna(0).round(0).astype("Int64")
+    return pd.to_numeric(x, errors="coerce").fillna(0).round(0).astype("Int64").reindex(index)
 
 
 def parse_published_at(series: pd.Series) -> pd.Series:
@@ -203,11 +194,11 @@ def standardize_meta_business_instagram(df_raw: pd.DataFrame) -> pd.DataFrame:
     if not required.issubset(cols):
         raise ValueError(f"Não parece export do Meta (Instagram). Faltando: {sorted(required - cols)}")
 
-    post_id = _coalesce(df_raw.get("Identificação do post"), df_raw.get("Post ID"))
-    account_name = _coalesce(df_raw.get("Nome da conta"), df_raw.get("Account name"))
-    caption = _coalesce(df_raw.get("Descrição"), df_raw.get("Caption"))
-    permalink = _coalesce(df_raw.get("Link permanente"), df_raw.get("Permalink"))
-    post_type_raw = _coalesce(df_raw.get("Tipo de post"), df_raw.get("Post type"))
+    post_id = _coalesce(df_raw.get("Identificação do post"), df_raw.get("Post ID"), df_raw.index)
+    account_name = _coalesce(df_raw.get("Nome da conta"), df_raw.get("Account name"), df_raw.index)
+    caption = _coalesce(df_raw.get("Descrição"), df_raw.get("Caption"), df_raw.index)
+    permalink = _coalesce(df_raw.get("Link permanente"), df_raw.get("Permalink"), df_raw.index)
+    post_type_raw = _coalesce(df_raw.get("Tipo de post"), df_raw.get("Post type"), df_raw.index)
 
     created_at = parse_published_at(df_raw["Horário de publicação"])
 
@@ -228,13 +219,13 @@ def standardize_meta_business_instagram(df_raw: pd.DataFrame) -> pd.DataFrame:
             "permalink": _blank_to_na(permalink),
             "post_type": post_type,
 
-            "reach": _to_int(df_raw.get("Alcance")),
-            "views": _to_int(_coalesce(df_raw.get("Visualizações"), df_raw.get("Views"))),
-            "likes": _to_int(_coalesce(df_raw.get("Curtidas"), df_raw.get("Likes"))),
-            "comments": _to_int(df_raw.get("Comentários")),
-            "shares": _to_int(df_raw.get("Compartilhamentos")),
-            "saves": _to_int(df_raw.get("Salvamentos")),
-            "follows": _to_int(_coalesce(df_raw.get("Seguimentos"), df_raw.get("Follows"))),
+            "reach": _to_int(df_raw.get("Alcance"), df_raw.index),
+            "views": _to_int(_coalesce(df_raw.get("Visualizações"), df_raw.get("Views"), df_raw.index), df_raw.index),
+            "likes": _to_int(_coalesce(df_raw.get("Curtidas"), df_raw.get("Likes"), df_raw.index), df_raw.index),
+            "comments": _to_int(df_raw.get("Comentários"), df_raw.index),
+            "shares": _to_int(df_raw.get("Compartilhamentos"), df_raw.index),
+            "saves": _to_int(df_raw.get("Salvamentos"), df_raw.index),
+            "follows": _to_int(_coalesce(df_raw.get("Seguimentos"), df_raw.get("Follows"), df_raw.index), df_raw.index),
 
             "_published_at_raw": _blank_to_na(df_raw.get("Horário de publicação")),
             "_source": "meta_business_instagram",
@@ -290,10 +281,10 @@ def standardize_already_schema(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     # ints
     for c in ["reach", "views", "likes", "comments", "shares", "saves"]:
-        df[c] = _to_int(df[c])
+        df[c] = _to_int(df[c], df.index)
 
     if "engagement" in df.columns:
-        df["engagement"] = _to_int(df["engagement"])
+        df["engagement"] = _to_int(df["engagement"], df.index)
     else:
         df["engagement"] = (df["likes"] + df["comments"] + df["shares"] + df["saves"]).astype("Int64")
 
@@ -441,7 +432,7 @@ def filter_period(dff: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
     return dff.loc[mask].copy()
 
 
-def month_start_end(y: int, m: int) -> Tuple[date, date]:
+def month_start_end(y: int, m: int) -> tuple[date, date]:
     start = date(y, m, 1)
     if m == 12:
         end = date(y, 12, 31)
@@ -615,6 +606,45 @@ def compare_period_ui(prefix: str, dff: pd.DataFrame) -> tuple[pd.DataFrame, pd.
     return a, b, f"{sa}→{ea}", f"{sb}→{eb}"
 
 
+def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
+    st.subheader("Insights com IA")
+    st.caption("Gere insights automáticos com base nos dados filtrados.")
+
+    api_key_default = os.getenv("OPENAI_API_KEY", "")
+    api_key = st.text_input(
+        "OpenAI API Key",
+        value=api_key_default,
+        type="password",
+        key=f"{prefix}_api_key",
+        help="Defina sua chave para gerar insights. Ela não é salva no projeto.",
+    )
+    model = st.text_input(
+        "Modelo",
+        value="gpt-4o-mini",
+        key=f"{prefix}_model",
+        help="Ex.: gpt-4o-mini, gpt-4o, ou outro modelo disponível na sua conta.",
+    )
+    max_posts = st.slider(
+        "Quantidade de posts para análise (amostra)",
+        min_value=5,
+        max_value=30,
+        value=10,
+        step=1,
+        key=f"{prefix}_max_posts",
+    )
+
+    if st.button("Gerar insights", key=f"{prefix}_run"):
+        if dff.empty:
+            st.warning("Sem dados após filtros. Ajuste o período ou selecione outros arquivos.")
+            return
+        if not api_key.strip():
+            st.warning("Informe sua OpenAI API Key para continuar.")
+            return
+        with st.spinner("Gerando insights..."):
+            insights = generate_instagram_insights(dff, api_key=api_key.strip(), model=model.strip(), max_posts=max_posts)
+        st.markdown(insights)
+
+
 # =========================
 # App
 # =========================
@@ -713,6 +743,8 @@ def main() -> None:
         t1.dataframe(top_posts(df_f, "reach", n=10), use_container_width=True, hide_index=True)
         t2.markdown("**Top 10 por Engagement**")
         t2.dataframe(top_posts(df_f, "engagement", n=10), use_container_width=True, hide_index=True)
+
+        ai_insights_ui("single_ai", df_f)
 
         # export
         st.subheader("Export para /output (este CSV filtrado)")
@@ -825,6 +857,9 @@ def main() -> None:
         u1.dataframe(top_posts(dfa, "engagement", n=10), use_container_width=True, hide_index=True)
         u2.markdown("**Top 10 por Engagement — B**")
         u2.dataframe(top_posts(dfb, "engagement", n=10), use_container_width=True, hide_index=True)
+
+        ai_insights_ui("multi_ai_a", dfa)
+        ai_insights_ui("multi_ai_b", dfb)
 
         st.subheader("Export para /output (A e B)")
         prefix_default = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
