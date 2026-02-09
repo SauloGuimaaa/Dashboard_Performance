@@ -390,3 +390,81 @@ def generate_instagram_insights(
     )
 
     return response.choices[0].message.content or ""
+
+
+def generate_instagram_comparison_insights(
+    df_a: pd.DataFrame,
+    df_b: pd.DataFrame,
+    api_key: str,
+    model: str = "gpt-4o-mini",
+    max_posts: int = 10,
+    category_rules_text: str | None = None,
+    vehicle_name: str | None = None,
+    objective: str | None = None,
+    benchmark_engagement_rate: float | None = None,
+    label_a: str | None = None,
+    label_b: str | None = None,
+) -> str:
+    """Generate comparative insights for two datasets (A vs B)."""
+    category_rules = _build_category_map(category_rules_text or "")
+    payload_a = build_insight_request(
+        _ensure_metrics(_dedupe_columns(df_a)),
+        max_posts=max_posts,
+        category_rules=category_rules,
+    )
+    payload_b = build_insight_request(
+        _ensure_metrics(_dedupe_columns(df_b)),
+        max_posts=max_posts,
+        category_rules=category_rules,
+    )
+    payload_json = json.dumps(
+        {
+            "period_a": asdict(payload_a),
+            "period_b": asdict(payload_b),
+        },
+        ensure_ascii=False,
+    )
+
+    vehicle = vehicle_name or "Veículo"
+    objective_text = objective or "Aumentar performance comparando períodos"
+    benchmark_text = (
+        f"Benchmark de taxa de engajamento: {benchmark_engagement_rate:.2f}%."
+        if benchmark_engagement_rate is not None
+        else "Benchmark não informado."
+    )
+    period_a = label_a or "Período A"
+    period_b = label_b or "Período B"
+
+    prompt = (
+        "Você é Dr. Ricardo Mendes, consultor sênior em estratégia digital para veículos de notícias. "
+        f"Cliente: {vehicle}. Objetivo: {objective_text}. {benchmark_text}\n\n"
+        "Compare dois períodos (A vs B) e gere um relatório executivo comparativo. "
+        "Use o framework O-P-E-A em cada insight e quantifique diferenças (% e deltas). "
+        "Identifique gargalos, boas práticas e o que mudou no mix de conteúdo.\n\n"
+        "Estrutura obrigatória:\n"
+        "1) Pergunta estratégica (comparativa)\n"
+        "2) Sumário executivo com diferenças-chave (3-5 bullets)\n"
+        "3) Vencedores e perdedores por categoria (delta de views_avg, reach_avg, engagement_avg)\n"
+        "4) Mudanças no Top 20 (dominância por categoria)\n"
+        "5) Mudanças no mix recomendado (A vs B) com ações\n"
+        "6) Gargalos identificados (formato, horário, categoria, copy)\n"
+        "7) Boas práticas observadas (replicar)\n"
+        "8) Plano de ação 30 dias + KPIs\n\n"
+        f"Período A: {period_a}\n"
+        f"Período B: {period_b}\n\n"
+        "Dados estruturados (JSON):\n"
+        f"{payload_json}"
+    )
+
+    http_client = httpx.Client(timeout=httpx.Timeout(30.0), trust_env=False)
+    client = OpenAI(api_key=api_key, http_client=http_client)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "Você é um(a) especialista em performance digital no Instagram."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+    )
+
+    return response.choices[0].message.content or ""

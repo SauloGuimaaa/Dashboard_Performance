@@ -25,7 +25,7 @@ if str(SRC_DIR) not in sys.path:
 
 from common.logging_config import setup_logging  # noqa: E402
 from common.paths import INPUT_DIR, OUTPUT_DIR  # noqa: E402
-from insights.ai_insights import generate_instagram_insights  # noqa: E402
+from insights.ai_insights import generate_instagram_comparison_insights, generate_instagram_insights  # noqa: E402
 
 CHARTS_DIR = OUTPUT_DIR / "charts"
 TABLES_DIR = OUTPUT_DIR / "tables"
@@ -606,7 +606,13 @@ def compare_period_ui(prefix: str, dff: pd.DataFrame) -> tuple[pd.DataFrame, pd.
     return a, b, f"{sa}→{ea}", f"{sb}→{eb}"
 
 
-def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
+def ai_insights_ui(
+    prefix: str,
+    dff: pd.DataFrame,
+    compare_df: pd.DataFrame | None = None,
+    label_a: str | None = None,
+    label_b: str | None = None,
+) -> None:
     st.subheader("Insights com IA")
     st.caption("Gere insights automáticos com base nos dados filtrados.")
 
@@ -668,16 +674,31 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
             return
         with st.spinner("Gerando insights..."):
             try:
-                insights = generate_instagram_insights(
-                    dff,
-                    api_key=api_key.strip(),
-                    model=model.strip(),
-                    max_posts=max_posts,
-                    category_rules_text=category_rules_text,
-                    vehicle_name=vehicle_name.strip(),
-                    objective=objective.strip(),
-                    benchmark_engagement_rate=benchmark_rate,
-                )
+                if compare_df is not None:
+                    insights = generate_instagram_comparison_insights(
+                        dff,
+                        compare_df,
+                        api_key=api_key.strip(),
+                        model=model.strip(),
+                        max_posts=max_posts,
+                        category_rules_text=category_rules_text,
+                        vehicle_name=vehicle_name.strip(),
+                        objective=objective.strip(),
+                        benchmark_engagement_rate=benchmark_rate,
+                        label_a=label_a,
+                        label_b=label_b,
+                    )
+                else:
+                    insights = generate_instagram_insights(
+                        dff,
+                        api_key=api_key.strip(),
+                        model=model.strip(),
+                        max_posts=max_posts,
+                        category_rules_text=category_rules_text,
+                        vehicle_name=vehicle_name.strip(),
+                        objective=objective.strip(),
+                        benchmark_engagement_rate=benchmark_rate,
+                    )
             except Exception as exc:
                 st.error("Falha ao gerar insights. Tente reduzir a amostra ou aguarde alguns segundos e tente novamente.")
                 st.exception(exc)
@@ -898,8 +919,7 @@ def main() -> None:
         u2.markdown("**Top 10 por Engagement — B**")
         u2.dataframe(top_posts(dfb, "engagement", n=10), use_container_width=True, hide_index=True)
 
-        ai_insights_ui("multi_ai_a", dfa)
-        ai_insights_ui("multi_ai_b", dfb)
+        ai_insights_ui("multi_ai_compare", dfa, compare_df=dfb, label_a=label_a, label_b=label_b)
 
         st.subheader("Export para /output (A e B)")
         prefix_default = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
