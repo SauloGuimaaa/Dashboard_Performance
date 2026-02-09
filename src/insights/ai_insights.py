@@ -40,10 +40,11 @@ def _select_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightRequest:
     """Builds a compact summary payload for the AI prompt."""
     df = _dedupe_columns(df)
+    created_at = df["created_at"] if "created_at" in df else pd.Series([], dtype="datetime64[ns]")
     summary = {
         "rows": int(len(df)),
-        "date_min": None if df["created_at"].isna().all() else str(df["created_at"].min()),
-        "date_max": None if df["created_at"].isna().all() else str(df["created_at"].max()),
+        "date_min": None if created_at.isna().all() else str(created_at.min()),
+        "date_max": None if created_at.isna().all() else str(created_at.max()),
         "reach_total": int(df["reach"].sum()) if "reach" in df else 0,
         "engagement_total": int(df["engagement"].sum()) if "engagement" in df else 0,
         "views_total": int(df["views"].sum()) if "views" in df else 0,
@@ -80,7 +81,8 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
     )
 
     captions_sample = (
-        _select_columns(_safe_sample(df, n=max_posts), ["post_id", "caption", "post_type", "permalink"])
+        _select_columns(_safe_sample(df, n=max_posts), ["post_id", "caption", "post_type", "permalink", "created_at"])
+        .assign(created_at=lambda d: d["created_at"].astype("string") if "created_at" in d else d)
         .fillna("")
         .to_dict("records")
         if "caption" in df
