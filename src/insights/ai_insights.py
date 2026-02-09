@@ -38,7 +38,28 @@ def _select_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return df.loc[:, available]
 
 
-def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightRequest:
+def _truncate_text(value: Any, limit: int) -> Any:
+    if not isinstance(value, str):
+        return value
+    if len(value) <= limit:
+        return value
+    return value[:limit] + "…"
+
+
+def _truncate_records(records: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return records
+    out: list[dict[str, Any]] = []
+    for rec in records:
+        out.append({k: _truncate_text(v, limit) for k, v in rec.items()})
+    return out
+
+
+def build_insight_request(
+    df: pd.DataFrame,
+    max_posts: int = 10,
+    caption_char_limit: int = 280,
+) -> InsightRequest:
     """Builds a compact summary payload for the AI prompt."""
     df = _dedupe_columns(df)
     created_at = df["created_at"] if "created_at" in df else pd.Series([], dtype="datetime64[ns]")
@@ -62,6 +83,7 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
         if "reach" in df
         else []
     )
+    top_reach = _truncate_records(top_reach, caption_char_limit)
 
     top_engagement = (
         _select_columns(
@@ -74,6 +96,7 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
         if "engagement" in df
         else []
     )
+    top_engagement = _truncate_records(top_engagement, caption_char_limit)
 
     post_types = (
         df["post_type"].fillna("(vazio)").value_counts().reset_index().rename(columns={"index": "post_type", "post_type": "count"}).to_dict("records")
@@ -89,6 +112,7 @@ def build_insight_request(df: pd.DataFrame, max_posts: int = 10) -> InsightReque
         if "caption" in df
         else []
     )
+    captions_sample = _truncate_records(captions_sample, caption_char_limit)
 
     return InsightRequest(
         summary=summary,
@@ -106,8 +130,14 @@ def generate_instagram_insights(
     max_posts: int = 10,
 ) -> str:
     """Generate insights text for Instagram performance using OpenAI."""
-    payload = build_insight_request(df, max_posts=max_posts)
-    payload_json = json.dumps(asdict(payload), ensure_ascii=False)
+    payload_json = ""
+    for candidate in [max_posts, 100, 50, 20, 10, 5]:
+        if candidate <= 0:
+            continue
+        payload = build_insight_request(df, max_posts=min(candidate, max_posts))
+        payload_json = json.dumps(asdict(payload), ensure_ascii=False)
+        if len(payload_json) <= 12000:
+            break
 
     prompt = (
         "Você é um(a) especialista em performance digital no Instagram. "

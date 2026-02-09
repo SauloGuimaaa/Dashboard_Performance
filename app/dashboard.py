@@ -642,7 +642,12 @@ def ai_insights_ui(prefix: str, dff: pd.DataFrame) -> None:
             st.warning("Informe sua OpenAI API Key para continuar.")
             return
         with st.spinner("Gerando insights..."):
-            insights = generate_instagram_insights(dff, api_key=api_key.strip(), model=model.strip(), max_posts=max_posts)
+            try:
+                insights = generate_instagram_insights(dff, api_key=api_key.strip(), model=model.strip(), max_posts=max_posts)
+            except Exception as exc:
+                st.error("Falha ao gerar insights. Tente reduzir a amostra ou aguarde alguns segundos e tente novamente.")
+                st.exception(exc)
+                return
         st.markdown(insights)
 
 
